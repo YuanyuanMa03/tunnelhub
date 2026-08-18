@@ -391,6 +391,7 @@ dialog input { width: 100%; background: #0f1420; border: 1px solid #2c3a57; bord
 </dialog>
 <script>
 var users = [];
+var 最近保存时间 = 0;
 function el(tag, cls, text) {
 	var e = document.createElement(tag);
 	if (cls) e.className = cls;
@@ -579,7 +580,10 @@ function load() {
 		if (!r.ok) throw new Error('HTTP ' + r.status);
 		return r.json();
 	}).then(function (data) {
-		users = Array.isArray(data.users) ? data.users : [];
+		var 列表 = Array.isArray(data.users) ? data.users : [];
+		// KV 跨节点最终一致窗口内可能读到旧空列表，刚保存过则忽略，避免误清
+		if (!列表.length && users.length && Date.now() - 最近保存时间 < 8000) return;
+		users = 列表;
 		render();
 		setStatus('');
 	}).catch(function (err) {
@@ -596,8 +600,12 @@ function save() {
 		return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
 	}).then(function (res) {
 		if (!res.ok || res.data.error) throw new Error(res.data.error || ('HTTP ' + res.status));
+		最近保存时间 = Date.now();
+		if (Array.isArray(res.data.users)) {
+			users = res.data.users;
+			render();
+		}
 		setStatus(res.data.message || '已保存', 'ok');
-		load();
 	}).catch(function (err) {
 		setStatus('保存失败: ' + err.message, 'err');
 	});
@@ -930,7 +938,10 @@ export default {
 								const 规范列表 = 规范化子用户列表(输入列表, userID);
 								await 保存子用户列表(env, 规范列表);
 								ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Users', config_JSON));
-								return new Response(JSON.stringify({ success: true, message: `已保存 ${规范列表.length} 个子账号`, users: 规范列表 }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+								// 保存响应直接携带 subToken：KV 为最终一致存储，保存后立即回读可能读到旧值，
+								// 管理页用本响应渲染可完全规避"保存后行消失"的竞态
+								const 含订阅令牌 = await Promise.all(规范列表.map(async 用户 => ({ ...用户, subToken: await MD5MD5(host + 用户.uuid) })));
+								return new Response(JSON.stringify({ success: true, message: `已保存 ${规范列表.length} 个子账号`, users: 含订阅令牌 }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 							} catch (error) {
 								console.error('保存子账号失败:', error);
 								return new Response(JSON.stringify({ error: '保存子账号失败: ' + error.message }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
