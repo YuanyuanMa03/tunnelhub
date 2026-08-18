@@ -330,6 +330,7 @@ button:hover { background: #2f66d8; }
 button.ghost { background: #263049; color: #cdd6e6; }
 button.danger { background: #8c2f39; }
 button.mini { padding: 4px 9px; font-size: 12px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
 .tablewrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; background: #161d2e; border-radius: 8px; overflow: hidden; }
 th, td { padding: 9px 10px; border-bottom: 1px solid #263049; text-align: left; font-size: 13px; vertical-align: middle; }
@@ -476,6 +477,7 @@ function render() {
 	document.getElementById('count').textContent = users.length ? ('共 ' + users.length + ' 个子账号') : '';
 	users.forEach(function (u, i) {
 		var tr = document.createElement('tr');
+		var 未保存 = !u.subToken;
 
 		var tdName = el('td');
 		var nameInput = el('input');
@@ -484,6 +486,7 @@ function render() {
 		nameInput.value = u.name || '';
 		nameInput.oninput = function () { u.name = nameInput.value; };
 		tdName.appendChild(nameInput);
+		if (未保存) tdName.appendChild(el('span', 'tag off', '未保存'));
 
 		var tdUuid = el('td');
 		var uuidBox = el('div', 'uuid', u.uuid);
@@ -494,8 +497,12 @@ function render() {
 		tdUuid.appendChild(uuidBtn);
 
 		var tdSub = el('td');
-		var subBtn = el('button', 'mini', '复制订阅链接');
-		subBtn.onclick = function () { copyText(subUrl(u), subBtn); };
+		var subBtn = el('button', 'mini', 未保存 ? '保存后可复制' : '复制订阅链接');
+		if (未保存) {
+			subBtn.disabled = true;
+			subBtn.title = '请先点击「保存全部修改」，保存后列表自动刷新，即可复制订阅链接';
+		}
+		subBtn.onclick = function () { if (!subBtn.disabled) copyText(subUrl(u), subBtn); };
 		tdSub.appendChild(subBtn);
 
 		var tdQuota = el('td');
@@ -543,7 +550,8 @@ function render() {
 		var tdOp = el('td');
 		var resetBtn = el('button', 'mini ghost', '重置流量');
 		resetBtn.style.marginRight = '6px';
-		resetBtn.onclick = function () { resetTraffic(u.uuid, u.name); };
+		if (未保存) resetBtn.disabled = true;
+		resetBtn.onclick = function () { if (!resetBtn.disabled) resetTraffic(u.uuid, u.name); };
 		var delBtn = el('button', 'mini danger', '删除');
 		delBtn.onclick = function () {
 			if (!confirm('确定删除子账号「' + (u.name || u.uuid) + '」？其订阅将失效。')) return;
