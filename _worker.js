@@ -836,7 +836,7 @@ export default {
 						return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 					} else if (访问路径 === 'admin/users' || 访问路径 === 'admin/user') {// 子账号管理页面（内置）
 						return new Response(子账号管理页面HTML(), { status: 200, headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
-					} else if (访问路径 === 'admin/users.json') {// 读取子账号列表
+					} else if (访问路径 === 'admin/users.json' && request.method !== 'POST') {// 读取子账号列表（POST 交给下方保存处理器）
 						try {
 							const 子用户列表 = await 读取子用户列表(env, true);
 							await 读取流量记录(env);
