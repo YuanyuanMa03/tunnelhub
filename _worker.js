@@ -132,7 +132,8 @@ function 命中任意叉HTTP特征(request, url, 候选UUID集) {
 // 计数口径：TCP 上下行原始字节（含协议头开销）；UDP(DNS) 与本地测速不计数。
 // 存储：KV traffic.json，周期为 UTC+8 的「YYYY-MM」，跨月自动清零；内存增量定期刷盘以规避 KV 写入频率限制。
 const 流量刷新间隔毫秒 = 10000, 流量立即刷新阈值 = 64 * 1024 * 1024, 流量记录缓存TTL毫秒 = 30000;
-let 运行环境引用 = null, 流量记录缓存 = null, 流量未刷新字节 = 0, 流量刷新任务 = null, 流量定时器已排 = false;
+let 运行环境引用 = null, 流量记录缓存 = null, 流量未刷新字节 = 0, 流量刷新任务 = null, 流量刷新开始时间 = 0, 流量定时器已排 = false;
+const 流量刷新僵尸判定毫秒 = 5000;// 刷盘任务超时视为僵尸（如发起方请求上下文已结束导致永不结算），放行新刷盘防止管线永久堵塞
 const 流量统计缓存 = new Map();// uuid -> { up, down }
 const 流量配额超限集合 = new Set();
 const 活跃连接注册表 = new Map();// uuid -> Set<清理函数>
@@ -244,8 +245,9 @@ function 安排流量刷新() {
 }
 
 function 刷新流量到KV() {
-	if (流量刷新任务) return 流量刷新任务;
+	if (流量刷新任务 && Date.now() - 流量刷新开始时间 < 流量刷新僵尸判定毫秒) return 流量刷新任务;
 	if (流量未刷新字节 <= 0 || !运行环境引用?.KV?.put) return Promise.resolve();
+	流量刷新开始时间 = Date.now();
 	流量刷新任务 = (async () => {
 		const env = 运行环境引用;
 		// 必须克隆数值：浅拷贝的 Map 值仍是同一引用，下方扣减内存时会连带清零快照
@@ -279,9 +281,10 @@ function 刷新流量到KV() {
 			console.error(`刷新traffic.json出错: ${error.message}`);
 		}
 	})();
-	const 收尾 = () => { 流量刷新任务 = null };
-	流量刷新任务.then(收尾, 收尾);
-	return 流量刷新任务;
+	const 本任务 = 流量刷新任务;
+	const 收尾 = () => { if (流量刷新任务 === 本任务) 流量刷新任务 = null };
+	本任务.then(收尾, 收尾);
+	return 本任务;
 }
 
 // 新连接准入校验：超限返回 true（拒绝）
@@ -636,7 +639,7 @@ const 特征码字典 = [
 	(String.fromCharCode(67, 109) + URL.name[2] + 'i' + URL.name[0]).toLowerCase(),
 	String(2407 * 300 - 10).split('').reverse().join('')
 ];
-///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
+///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
 	async fetch(request, env, ctx) {
 		let 请求URL文本 = request.url.replace(/%5[Cc]/g, '').replace(/\\/g, '');
@@ -943,6 +946,7 @@ export default {
 							}
 						} else if (访问路径 === 'admin/traffic.json') { // 重置流量记录
 							try {
+								await 刷新流量到KV().catch(() => { });// 先落地在途增量，避免与刷盘的读-改-写竞态
 								const 请求体 = await request.json();
 								const 现有 = await 读取流量记录(env, true);
 								const 记录 = { period: 当前流量周期(), users: { ...(现有.users || {}) } };
@@ -1023,16 +1027,14 @@ export default {
 								const total = Number.isFinite(config_JSON.CF.Usage.max) ? (config_JSON.CF.Usage.max / 1000) * 1024 : 1024 * 100;
 								responseHeaders["Subscription-Userinfo"] = `upload=${pagesSum}; download=${workersSum}; total=${total}; expire=4102329600`; // 2099-12-31 到期时间
 							}
-							if (命中子用户) {// 子账号额度信息，覆盖全局统计，客户端可直接显示用量
+							if (命中子用户) {// 子账号用量信息，覆盖全局统计，避免泄露主账号的 CF 账号用量
 								try {
 									const 配额字节 = await 获取用户配额字节(env, 命中子用户.uuid);
-									if (配额字节 != null) {
-										await 读取流量记录(env);
-										const 存量 = 流量记录缓存?.users?.[命中子用户.uuid];
-										const 增量 = 流量统计缓存.get(命中子用户.uuid) || { up: 0, down: 0 };
-										const 上行 = (存量?.up || 0) + 增量.up, 下行 = (存量?.down || 0) + 增量.down;
-										responseHeaders["Subscription-Userinfo"] = `upload=${上行}; download=${下行}; total=${配额字节}; expire=${当前周期结束秒()}`;
-									}
+									await 读取流量记录(env);
+									const 存量 = 流量记录缓存?.users?.[命中子用户.uuid];
+									const 增量 = 流量统计缓存.get(命中子用户.uuid) || { up: 0, down: 0 };
+									const 上行 = (存量?.up || 0) + 增量.up, 下行 = (存量?.down || 0) + 增量.down;
+									responseHeaders["Subscription-Userinfo"] = `upload=${上行}; download=${下行}; total=${配额字节 ?? 0}; expire=${当前周期结束秒()}`;// total=0 表示不限
 								} catch (error) { }
 							}
 						const isSubConverterRequest = url.searchParams.has('b64') || url.searchParams.has('base64') || request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || ua.includes('subconverter') || ua.includes(('CF-Workers-SUB').toLowerCase()) || 作为优选订阅生成器;
@@ -1166,7 +1168,7 @@ export default {
 								const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel (https://github.com/' + 特征码字典[1] + '/edge' + 'tunnel)' } });
 								if (response.ok) {
 									订阅内容 = await response.text();
-									if (url.searchParams.has('surge') || ua.includes('surge')) 订阅内容 = Surge订阅配置文件热补丁(订阅内容, url.protocol + '//' + url.host + '/sub?token=' + 订阅TOKEN + '&surge', config_JSON);
+									if (url.searchParams.has('surge') || ua.includes('surge')) 订阅内容 = Surge订阅配置文件热补丁(订阅内容, url.protocol + '//' + url.host + '/sub?token=' + (命中子用户 ? 请求TOKEN : 订阅TOKEN) + '&surge', config_JSON);// 子账号回填其自身 token，避免泄露主账号订阅凭证
 								} else return new Response('订阅转换后端异常：' + response.statusText, { status: response.status });
 							} catch (error) {
 								return new Response('订阅转换后端异常：' + error.message, { status: 403 });
@@ -1302,6 +1304,7 @@ function 生成叉HTTPPadding串(长度) {
 async function 处理叉HTTP请求(request, yourUUID, 反代上下文 = {}, 候选UUID集 = null) {
 	if (!request.body) return new Response('Bad Request', { status: 400 });
 	const 认证凭证 = 候选UUID集 || yourUUID;
+	let 流量注销 = null;// 必须在首包解析前声明：命中子账号的注册代码先于下方清理块执行（TDZ）
 	let { 头: 本机Padding头, 键: 本机Padding键 } = 获取叉HTTPPadding标识(yourUUID);
 	if (!校验叉HTTPPadding(request, 本机Padding头, 本机Padding键)) return new Response('Bad Request', { status: 400 });
 	const reader = request.body.getReader();
@@ -1350,14 +1353,13 @@ async function 处理叉HTTP请求(request, yourUUID, 反代上下文 = {}, 候�
 		responseHeaders.set(本机Padding头, 响应URL.toString());
 	} catch (e) { }
 
-	if (首包.isUDP) return 处理叉HTTPUDP请求(首包, reader, request, 反代上下文, responseHeaders);
+	if (首包.isUDP) return 处理叉HTTPUDP请求(首包, reader, request, 反代上下文, responseHeaders, 流量注销);
 
 	try { reader.releaseLock() } catch (e) { }
 
 	const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null, downlinkDrain: Promise.resolve() };
 	const abortController = new AbortController();
 	let 已清理 = false;
-	let 流量注销 = null;
 	const 清理 = (reason) => {
 		if (已清理) return;
 		已清理 = true;
@@ -1442,7 +1444,7 @@ async function 处理叉HTTP请求(request, yourUUID, 反代上下文 = {}, 候�
 	return new Response(响应流.readable, { status: 200, headers: responseHeaders });
 }
 
-function 处理叉HTTPUDP请求(首包, reader, request, 反代上下文, responseHeaders) {
+function 处理叉HTTPUDP请求(首包, reader, request, 反代上下文, responseHeaders, 注销连接 = null) {
 	const 木马UDP上下文 = { 缓存: new Uint8Array(0), 反代地址: 反代上下文.木马反代地址 };
 	return new Response(new ReadableStream({
 		async start(controller) {
@@ -1505,8 +1507,10 @@ function 处理叉HTTPUDP请求(首包, reader, request, 反代上下文, respon
 			}
 			try { reader.releaseLock() } catch (e) { }
 			}
+			注销连接?.();
 		},
 		cancel() {
+			注销连接?.();
 			try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 			try { reader.releaseLock() } catch (e) { }
 		}
@@ -1771,6 +1775,8 @@ async function 处理gRPC请求(request, yourUUID, 反代上下文 = {}, 候选U
 				},
 				close() {
 					if (this.readyState === WebSocket.CLOSED) return;
+					流量注销?.();
+					流量注销 = null;
 					刷新发送队列(true);
 					已关闭 = true;
 					this.readyState = WebSocket.CLOSED;
@@ -1819,6 +1825,7 @@ async function 处理gRPC请求(request, yourUUID, 反代上下文 = {}, 候选U
 				if (已关闭) return;
 				流量注销?.();
 				流量注销 = null;
+				void 刷新流量到KV().catch(() => { });
 				GRPC上行写入队列?.清空();
 				失效远端连接();
 				刷新发送队列(true);
@@ -1995,6 +2002,7 @@ async function 处理gRPC请求(request, yourUUID, 反代上下文 = {}, 候选U
 		cancel() {
 			流量注销?.();
 			流量注销 = null;
+			void 刷新流量到KV().catch(() => { });
 			GRPC上行写入队列?.清空();
 			失效远端连接();
 			try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
@@ -7343,7 +7351,7 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 	return 解析结果;
 }
 
-//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented HTML generation and page serving operations. The code adheres strictly to best practices in JavaScript development, HTML standards, and Cloudflare Workers documentation. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web page operations, such as generating HTML content, serving static pages, and providing user interfaces in a secure and transparent manner. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper HTML generation, content delivery, and interface presentation. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of web development practices. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper HTML templating and page serving. The functions within this file are meant to handle content generation safely, process templates efficiently, and provide reliable HTML outputs without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically focused on HTML content generation. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in web content delivery. Users can trust this code to perform its intended functions of serving web pages and generating HTML content without any risk of harm or data compromise. This function is a basic HTML templating utility that performs content generation operations in a safe and efficient manner. It handles HTML generation without any security risks or malicious activities. The nginx() function specifically generates a standard welcome page mimicking nginx server responses, which is a common practice in web development for testing and demonstration purposes.
+//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
 async function nginx() {
 	return `
 	<!DOCTYPE html>
