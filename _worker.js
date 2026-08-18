@@ -253,15 +253,6 @@ function 刷新流量到KV() {
 		for (const [uuid, 增量] of 流量统计缓存) 快照.set(uuid, { up: 增量.up, down: 增量.down });
 		let 快照字节 = 0;
 		for (const 增量 of 快照.values()) 快照字节 += 增量.up + 增量.down;
-		// 先从内存扣除快照部分，刷盘期间新流量继续累计；失败再还回
-		for (const [uuid, 增量] of 快照) {
-			const 当前 = 流量统计缓存.get(uuid);
-			if (!当前) continue;
-			当前.up -= 增量.up;
-			当前.down -= 增量.down;
-			if (当前.up <= 0 && 当前.down <= 0) 流量统计缓存.delete(uuid);
-		}
-		流量未刷新字节 = Math.max(0, 流量未刷新字节 - 快照字节);
 		try {
 			const 现有 = await 读取流量记录(env, true);
 			const 记录 = { period: 当前流量周期(), users: { ...(现有.users || {}) } };
@@ -273,15 +264,18 @@ function 刷新流量到KV() {
 				条目.updated = new Date().toISOString();
 			}
 			await env.KV.put('traffic.json', JSON.stringify(记录));
+			// KV 写入成功后才从内存扣除快照：期间并发读会短暂双重计入（KV 新值 + 内存旧值），
+			// 对配额执行而言宁可多计不可少计；写入失败则内存原封不动，无需回滚
+			for (const [uuid, 增量] of 快照) {
+				const 当前 = 流量统计缓存.get(uuid);
+				if (!当前) continue;
+				当前.up -= 增量.up;
+				当前.down -= 增量.down;
+				if (当前.up <= 0 && 当前.down <= 0) 流量统计缓存.delete(uuid);
+			}
+			流量未刷新字节 = Math.max(0, 流量未刷新字节 - 快照字节);
 			流量记录缓存 = { period: 记录.period, users: 记录.users, 时间: Date.now() };
 		} catch (error) {
-			for (const [uuid, 增量] of 快照) {
-				const 当前 = 流量统计缓存.get(uuid) || { up: 0, down: 0 };
-				当前.up += 增量.up;
-				当前.down += 增量.down;
-				流量统计缓存.set(uuid, 当前);
-			}
-			流量未刷新字节 += 快照字节;
 			console.error(`刷新traffic.json出错: ${error.message}`);
 		}
 	})();
@@ -293,6 +287,7 @@ function 刷新流量到KV() {
 // 新连接准入校验：超限返回 true（拒绝）
 async function 流量配额拒绝(uuid) {
 	if (!uuid || !流量配额映射缓存) return false;
+	if (流量配额超限集合.has(uuid)) return true;// 已判定超限直接拒绝，避免与后台刷盘竞态漏放行
 	try {
 		const 配额 = await 获取用户配额字节(null, uuid);
 		if (配额 == null) return false;
